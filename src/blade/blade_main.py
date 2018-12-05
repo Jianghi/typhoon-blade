@@ -357,7 +357,7 @@ def _main(blade_path):
                 command == 'clean' or command == 'query'):
             try:
                 if locked_scons:
-                    os.remove(os.path.join(blade_root_dir, 'SConstruct'))
+                    #os.remove(os.path.join(blade_root_dir, 'SConstruct'))
                     unlock_file(lock_file_fd.fileno())
                 if lock_file_fd:
                     lock_file_fd.close()

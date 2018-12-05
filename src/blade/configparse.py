@@ -107,6 +107,8 @@ class BladeConfig(object):
 
             'proto_library_config': {
                 'protoc': 'thirdparty/protobuf/bin/protoc',
+                'grpc': 'thirdparty/grpc/bin/grpc_cpp_plugin',
+                'grpc_libs': '//thirdparty/grpc:grpc++',
                 'protoc_java': '',
                 'protobuf_libs': [],
                 'protobuf_path': '',

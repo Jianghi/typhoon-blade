@@ -1128,10 +1128,11 @@ def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
         compile_proto_cc_message))
     top_env.Append(BUILDERS = {"Proto" : proto_bld})
     grpc_bld = SCons.Builder.Builder(action = MakeAction(
-        "%s --proto_path=. --plugin=protoc-gen-grpc=%s -I. %s -I=`dirname $SOURCE` --cpp_out=%s $SOURCE" % (
+        "%s --proto_path=. --plugin=protoc-gen-grpc=%s -I. %s -I=`dirname $SOURCE` --grpc_out=%s $SOURCE" % (
             protoc_bin, protoc_grpc_plugin, protobuf_incs_str, build_dir),
         compile_proto_cc_message))
     top_env.Append(BUILDERS = {"GrpcProto" : grpc_bld})
+
     proto_java_bld = SCons.Builder.Builder(action = MakeAction(
         "%s --proto_path=. --proto_path=%s --java_out=%s/`dirname $SOURCE` $SOURCE" % (
             protoc_java_bin, protobuf_path, build_dir),

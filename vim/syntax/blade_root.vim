@@ -75,6 +75,8 @@ syn keyword bladeArg fbthrift_libs
 syn keyword bladeArg fbthrift_incs
 syn keyword bladeTarget proto_library_config
 syn keyword bladeArg protoc
+syn keyword bladeArg grpc
+syn keyword bladeArg grpc_libs
 syn keyword bladeArg protoc_java
 syn keyword bladeArg protobuf_libs
 syn keyword bladeArg protobuf_path

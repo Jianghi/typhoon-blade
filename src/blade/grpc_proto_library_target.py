@@ -17,7 +17,7 @@ import configparse
 import build_rules
 import java_targets
 from blade_util import var_to_list
-from cc_targets import ProtoLibrary
+from proto_library_target import ProtoLibrary
 
 
 class GrpcProtoLibrary(ProtoLibrary, java_targets.JavaTargetMixIn):
@@ -43,18 +43,19 @@ class GrpcProtoLibrary(ProtoLibrary, java_targets.JavaTargetMixIn):
         """
         ProtoLibrary.__init__(self,
                           name,
-                          'grpc_proto_library',
                           srcs,
                           deps,
-                          '',
-                          [], [], [], optimize, [], [],
+                          optimize,
+                          deprecated,
+                          generate_descriptors,
+                          source_encoding,
                           blade,
                           kwargs)
-    def _check_proto_deps(self):
-        """Only grpc_proto_library or gen_rule target is allowed as deps. """
-		ProtoLibrary._check_proto_deps(self)
-		grpc_libs=var_to_list(proto_config['grpc_libs'])
-		protobuf_libs = protobuf_libs.extend(grpc_libs)
+        proto_config = configparse.blade_config.get_config('proto_library_config')
+        if proto_config.has_key("grpc_libs"):
+            self.data['exported_deps'] += self._unify_deps(var_to_list(proto_config["grpc_libs"]))
+            self._add_hardcode_library(var_to_list(proto_config["grpc_libs"]))
+
     def _proto_gen_grpc_files(self, src):
         """_proto_gen_files. """
         proto_name = src[:-6]
@@ -94,9 +95,7 @@ class GrpcProtoLibrary(ProtoLibrary, java_targets.JavaTargetMixIn):
         sources = []
         obj_names = []
         for src in self.srcs:
-		
-		    (proto_src, proto_hdr) = self._proto_gen_files(src)
-
+            (proto_src, proto_hdr) = self._proto_gen_files(src)
             self._write_rule('%s.Proto(["%s", "%s"], "%s")' % (
                     env_name, proto_src, proto_hdr, os.path.join(self.path, src)))
             obj_name = "%s_object" % self._var_name_of(src)
@@ -108,7 +107,7 @@ class GrpcProtoLibrary(ProtoLibrary, java_targets.JavaTargetMixIn):
                                   proto_src,
                                   proto_src))
             sources.append(proto_src)
-		
+            self._write_rule('%s.Append(CPPFLAGS="%s")' % (env_name, '-std=c++11'))
             (proto_src, proto_hdr) = self._proto_gen_grpc_files(src)
             self._write_rule('%s.GrpcProto(["%s", "%s"], "%s")' % (
                     env_name, proto_src, proto_hdr, os.path.join(self.path, src)))

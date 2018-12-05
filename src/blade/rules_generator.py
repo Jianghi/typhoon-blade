@@ -130,7 +130,9 @@ import scons_helper
         self._add_rule('time_value = Value("%s")' % time.asctime())
         proto_config = configparse.blade_config.get_config('proto_library_config')
         protoc_bin = proto_config['protoc']
-        grpc_bin = proto_config['grpc']
+        grpc_bin = ''
+        if proto_config.has_key('grpc'):
+            grpc_bin = proto_config['grpc']
         protoc_java_bin = protoc_bin
         if proto_config['protoc_java']:
             protoc_java_bin = proto_config['protoc_java']
