@@ -23,14 +23,13 @@ import console
 import maven
 
 from blade_util import var_to_list
-from blade_util import location_re
 from target import Target
 
 
 class MavenJar(Target):
     """MavenJar"""
     def __init__(self, name, id, classifier, transitive):
-        Target.__init__(self, name, 'maven_jar', [], [], None, blade.blade, {})
+        Target.__init__(self, name, 'maven_jar', [], [], blade.blade, {})
         self.data['id'] = id
         self.data['classifier'] = classifier
         self.data['transitive'] = transitive
@@ -130,28 +129,6 @@ class JavaTargetMixIn(object):
 
         return jars
 
-    def _process_resources(self, resources):
-        """
-        Process resources which could be regular files/directories or
-        location references.
-        """
-        self.data['resources'], self.data['location_resources'] = [], []
-        for resource in resources:
-            if isinstance(resource, tuple):
-                src, dst = resource
-            elif isinstance(resource, str):
-                src, dst = resource, ''
-            else:
-                console.error_exit('%s: Invalid resource %s. Resource should '
-                                   'be either str or tuple.' % (self.fullname, resource))
-
-            m = location_re.search(src)
-            if m:
-                key, type = self._add_location_reference_target(m)
-                self.data['location_resources'].append((key, type, dst))
-            else:
-                self.data['resources'].append((src, dst))
-
     def _get_classes_dir(self):
         """Return path of classes dir. """
         return self._target_file_path() + '.classes'
@@ -162,7 +139,7 @@ class JavaTargetMixIn(object):
 
     def __extract_dep_jars(self, dkey, dep_jar_vars, dep_jars):
         dep = self.target_database[dkey]
-        jar = dep._get_target_var('jar')
+        jar = dep.data.get('jar_var')
         if jar:
             dep_jar_vars.append(jar)
         else:
@@ -347,19 +324,25 @@ class JavaTargetMixIn(object):
 
         return full_path, jar_path
 
-    def _process_regular_resources(self, resources):
+    def _process_resources(self, resource_list):
+        resources = []
+        for resource in resource_list:
+            if isinstance(resource, tuple):
+                src, dst = resource[0], resource[1]
+            elif isinstance(resource, str):
+                src, dst = resource, ''
+            else:
+                console.error_exit('%s: Invalid resource %s. Resource should '
+                                   'be either str or tuple.' % (self.fullname, resource))
+            resources.append((src, dst))
+
         results = set()
         for resource in resources:
             full_path, jar_path = self._get_resource_path(resource)
-            if not os.path.exists(full_path):
-                console.error_exit('%s: Resource %s does not exist.' % (
-                                   self.fullname, full_path))
-            elif os.path.isfile(full_path):
+            if os.path.isfile(full_path):
                 results.add((full_path, jar_path))
             else:
                 for dir, subdirs, files in os.walk(full_path):
-                    # Skip over subdirs starting with '.', such as .svn
-                    subdirs[:] = [d for d in subdirs if not d.startswith('.')]
                     for f in files:
                         f = os.path.join(dir, f)
                         rel_path = os.path.relpath(f, full_path)
@@ -452,19 +435,14 @@ class JavaTargetMixIn(object):
     def _generate_java_depends(self, var_name, dep_jar_vars, dep_jars,
                                resources_var, resources_path_var):
         env_name = self._env_name()
-        if dep_jar_vars:
-            self._write_rule('%s.Depends(%s, [%s])' % (
-                    env_name, var_name, ','.join(dep_jar_vars)))
+        self._write_rule('%s.Depends(%s, [%s])' % (
+                env_name, var_name, ','.join(dep_jar_vars)))
         if dep_jars:
             self._write_rule('%s.Depends(%s, %s.Value(%s))' % (
                     env_name, var_name, env_name, sorted(dep_jars)))
         if resources_var:
             self._write_rule('%s.Depends(%s, %s.Value(%s))' % (
                     env_name, var_name, env_name, resources_path_var))
-        locations = self.data.get('location_resources')
-        if locations:
-            self._write_rule('%s.Depends(%s, %s.Value("%s"))' % (
-                env_name, var_name, env_name, sorted(set(locations))))
 
     def _generate_java_classes(self, var_name, srcs):
         env_name = self._env_name()
@@ -496,54 +474,24 @@ class JavaTargetMixIn(object):
             self._write_rule('%s.JavaSource(target = "%s", source = "%s")' %
                              (env_name, dst, src))
 
-    def _generate_regular_resources(self, resources,
-                                    resources_var, resources_path_var):
-        env_name = self._env_name()
-        resources_dir = self._target_file_path() + '.resources'
-        resources = self._process_regular_resources(resources)
-        for i, resource in enumerate(resources):
-            src, dst = resource[0], os.path.join(resources_dir, resource[1])
-            res_var = self._var_name('resources__%s' % i)
-            self._write_rule('%s = %s.JavaResource(target = "%s", source = "%s")' %
-                             (res_var, env_name, dst, src))
-            self._write_rule('%s.append(%s)' % (resources_var, res_var))
-            self._write_rule('%s.append("%s")' % (resources_path_var, dst))
-
-    def _generate_location_resources(self, resources, resources_var):
-        env_name = self._env_name()
-        resources_dir = self._target_file_path() + '.resources'
-        targets = self.blade.get_build_targets()
-        for i, resource in enumerate(resources):
-            key, type, dst = resource
-            target = targets[key]
-            target_var = target._get_target_var(type)
-            if not target_var:
-                console.warning('%s: Location %s %s is missing. Ignored.' %
-                                (self.fullname, key, type))
-                continue
-            if dst:
-                dst_path = os.path.join(resources_dir, dst)
-            else:
-                dst_path = os.path.join(resources_dir, '${SOURCE.file}')
-            res_var = self._var_name('location_resources__%s' % i)
-            self._write_rule('%s = %s.JavaResource(target = "%s", source = %s)' %
-                             (res_var, env_name, dst_path, target_var))
-            self._write_rule('%s.append(%s)' % (resources_var, res_var))
-
     def _generate_resources(self):
         resources = self.data['resources']
-        locations = self.data['location_resources']
-        if not resources and not locations:
+        if not resources:
             return '', ''
+        resources = self._process_resources(resources)
         env_name = self._env_name()
         resources_var_name = self._var_name('resources')
         resources_path_var_name = self._var_name('resources_path')
         resources_dir = self._target_file_path() + '.resources'
         self._write_rule('%s, %s = [], []' % (
             resources_var_name, resources_path_var_name))
-        self._generate_regular_resources(resources, resources_var_name,
-                                         resources_path_var_name)
-        self._generate_location_resources(locations, resources_var_name)
+        for i, resource in enumerate(resources):
+            src, dst = resource[0], os.path.join(resources_dir, resource[1])
+            res_var = self._var_name('resources__%s' % i)
+            self._write_rule('%s = %s.JavaResource(target = "%s", source = "%s")' %
+                             (res_var, env_name, dst, src))
+            self._write_rule('%s.append(%s)' % (resources_var_name, res_var))
+            self._write_rule('%s.append("%s")' % (resources_path_var_name, dst))
         self._write_rule('%s.Clean(%s, "%s")' % (
             env_name, resources_var_name, resources_dir))
         return resources_var_name, resources_path_var_name
@@ -552,6 +500,7 @@ class JavaTargetMixIn(object):
         env_name = self._env_name()
         self._write_rule('%s = %s.GeneratedJavaJar(target="%s" + top_env["JARSUFFIX"], source=[%s])' % (
             var_name, env_name, self._target_file_path(), ','.join(srcs)))
+        self.data['jar_var'] = var_name
 
     def _generate_java_jar(self, srcs, resources_var):
         env_name = self._env_name()
@@ -559,17 +508,14 @@ class JavaTargetMixIn(object):
         self._write_rule('%s = %s.BladeJavaJar(target="%s", source=%s + [%s])' % (
                 var_name, env_name, self._target_file_path() + '.jar',
                 srcs, resources_var))
-        # BladeJavaJar builder puts the generated classes
-        # into .class directory during jar building
-        classes_dir = self._get_classes_dir()
-        self._write_rule('%s.Clean(%s, "%s")' % (env_name, var_name, classes_dir))
+        self.data['jar_var'] = var_name
         return var_name
 
     def _generate_fat_jar(self, dep_jar_vars, dep_jars):
         var_name = self._var_name('fatjar')
         jar_vars = []
-        if self._get_target_var('jar'):
-            jar_vars = [self._get_target_var('jar')]
+        if self.data.get('jar_var'):
+            jar_vars = [self.data.get('jar_var')]
         jar_vars.extend(dep_jar_vars)
         self._write_rule('%s = %s.FatJar(target="%s", source=[%s] + %s)' % (
             var_name, self._env_name(),
@@ -607,21 +553,18 @@ class JavaTarget(Target, JavaTargetMixIn):
                         type,
                         srcs,
                         deps,
-                        None,
                         blade.blade,
                         kwargs)
-        self._process_resources(resources)
+        self.data['resources'] = resources
         self.data['source_encoding'] = source_encoding
         if warnings is not None:
             self.data['warnings'] = var_to_list(warnings)
-
-    def _clone_env(self):
-        self._write_rule('%s = env_java.Clone()' % self._env_name())
 
     def _prepare_to_generate_rule(self):
         """Should be overridden. """
         self._check_deprecated_deps()
         self._clone_env()
+        self._generate_java_versions()
         self._generate_java_source_encoding()
         warnings = self.data.get('warnings')
         if warnings is None:
@@ -676,22 +619,14 @@ class JavaLibrary(JavaTarget):
             if not binary_jar:
                 binary_jar = name + '.jar'
             self.data['binary_jar'] = self._source_file_path(binary_jar)
-
-    def _generate_prebuilt_jar(self):
-        var_name = self._var_name('jar')
-        self._write_rule('%s = top_env.File(["%s"])' % (
-                         var_name, self.data['binary_jar']))
-        return var_name
+            self._add_default_target_var('jar', self.data['binary_jar'])
 
     def scons_rules(self):
-        if self.type == 'prebuilt_java_library':
-            jar_var = self._generate_prebuilt_jar()
-        else:
+        if self.type != 'prebuilt_java_library':
             self._prepare_to_generate_rule()
             jar_var = self._generate_jar()
-
-        if jar_var:
-            self._add_default_target_var('jar', jar_var)
+            if jar_var:
+                self._add_default_target_var('jar', jar_var)
 
 
 class JavaBinary(JavaTarget):
@@ -718,21 +653,19 @@ class JavaBinary(JavaTarget):
     def _generate_one_jar(self, dep_jar_vars, dep_jars):
         var_name = self._var_name('onejar')
         jar_vars = []
-        if self._get_target_var('jar'):
-            jar_vars = [self._get_target_var('jar')]
+        if self.data.get('jar_var'):
+            jar_vars = [self.data.get('jar_var')]
         jar_vars.extend(dep_jar_vars)
         self._write_rule('%s = %s.OneJar(target="%s", source=[Value("%s")] + [%s] + %s)' % (
             var_name, self._env_name(),
             self._target_file_path() + '.one.jar', self.data['main_class'],
             ','.join(jar_vars), dep_jars))
-        self._add_target_var('onejar', var_name)
         return var_name
 
     def _generate_wrapper(self, onejar):
         var_name = self._var_name()
         self._write_rule('%s = %s.JavaBinary(target="%s", source=%s)' % (
             var_name, self._env_name(), self._target_file_path(), onejar))
-        self._add_default_target_var('bin', var_name)
 
 
 class JavaFatLibrary(JavaTarget):
@@ -785,7 +718,7 @@ class JavaTest(JavaBinary):
 
     def _generate_java_test(self, dep_jar_vars, dep_jars):
         var_name = self._var_name()
-        jar_var = self._get_target_var('jar')
+        jar_var = self.data.get('jar_var')
         if jar_var:
             self._write_rule('%s = %s.JavaTest(target="%s", '
                              'source=[Value("%s")] + [%s] + [%s] + %s)' % (
@@ -877,7 +810,7 @@ def java_fat_library(name,
                      srcs=[],
                      deps=[],
                      resources=[],
-                     source_encoding=None,
+                     source_encoding='',
                      warnings=None,
                      exclusions=[],
                      **kwargs):

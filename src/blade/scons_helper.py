@@ -28,7 +28,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tarfile
 import zipfile
 import glob
 
@@ -45,10 +44,6 @@ from console import colors
 
 # option_verbose to indicate print verbose or not
 option_verbose = False
-
-
-# blade path
-blade_path = os.path.dirname(__file__)
 
 
 # linking tmp dir
@@ -175,9 +170,6 @@ def _compile_python(src, build_dir):
         pyc = src + 'c'
     else:
         pyc = os.path.join(build_dir, src) + 'c'
-    dir = os.path.dirname(pyc)
-    if not os.path.exists(dir):
-        os.makedirs(dir)
     py_compile.compile(src, pyc)
     return pyc
 
@@ -190,9 +182,8 @@ def generate_python_library(target, source, env):
     srcs = []
     for s in source:
         src = str(s)
-        pyc = _compile_python(src, build_dir)
-        digest = blade_util.md5sum_file(src)
-        srcs.append((src, pyc, digest))
+        _compile_python(src, build_dir)
+        srcs.append(src)
     data['srcs'] = srcs
     target_file.write(str(data))
     target_file.close()
@@ -209,9 +200,9 @@ def _update_init_py_dirs(arcname, dirs, dirs_with_init_py):
 
 
 def generate_python_binary(target, source, env):
-    """The action to generate python executable file. """
+    """The action for generate python executable file"""
     target_name = str(target[0])
-    base_dir, build_dir = env.get('BASE_DIR', ''), env['BUILD_DIR']
+    build_dir = env['BUILD_DIR']
     target_file = zipfile.ZipFile(target_name, 'w', zipfile.ZIP_DEFLATED)
     dirs = set()
     dirs_with_init_py = set()
@@ -221,22 +212,19 @@ def generate_python_binary(target, source, env):
             libfile = open(src)
             data = eval(libfile.read())
             libfile.close()
-            pylib_base_dir = data['base_dir']
-            for libsrc, pyc, digest in data['srcs']:
-                arcname = os.path.relpath(libsrc, pylib_base_dir)
+            base_dir = data['base_dir']
+            for libsrc in data['srcs']:
+                arcname = os.path.relpath(libsrc, base_dir)
                 _update_init_py_dirs(arcname, dirs, dirs_with_init_py)
                 target_file.write(libsrc, arcname)
-                target_file.write(pyc, arcname + 'c')
         else:
-            pyc = _compile_python(src, build_dir)
-            arcname = os.path.relpath(src, base_dir)
-            _update_init_py_dirs(arcname, dirs, dirs_with_init_py)
-            target_file.write(src, arcname)
-            target_file.write(pyc, arcname + 'c')
+            _compile_python(src, build_dir)
+            _update_init_py_dirs(src, dirs, dirs_with_init_py)
+            target_file.write(src)
 
-    # Insert __init__.py into each dir if missing
+    # insert __init__.py into each dir if missing
     dirs_missing_init_py = dirs - dirs_with_init_py
-    for dir in sorted(dirs_missing_init_py):
+    for dir in dirs_missing_init_py:
         target_file.writestr(os.path.join(dir, '__init__.py'), '')
     target_file.writestr('__init__.py', '')
     target_file.close()
@@ -336,6 +324,74 @@ def generate_resource_file(target, source, env):
     return p.returncode
 
 
+def _java_resource_file_target_path(path):
+    """ Return relative target path in target dir, see
+    https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
+    for the rules
+    """
+    path =  str(path)
+    segs = [
+        '/src/main/resources/',
+        '/src/test/resources/',
+        '/resources/',
+    ]
+    for seg in segs:
+        pos = path.find(seg)
+        if pos != -1:
+            return path[pos + len(seg):]
+    return ''
+
+
+# emitter function is used by scons builder to determine target files from
+# source files.
+def _emit_java_resources(target, source, env):
+    """Create and return lists of source resource files
+    and their corresponding target resource files.
+    """
+
+    target[0].must_be_same(SCons.Node.FS.Dir)
+    classdir = target[0]
+
+    slist = []
+    for entry in source:
+        entry = entry.rentry().disambiguate()
+        if isinstance(entry, SCons.Node.FS.File):
+            slist.append(entry)
+        elif isinstance(entry, SCons.Node.FS.Dir):
+            result = SCons.Util.OrderedDict()
+            dirnode = entry.rdir()
+            def find_files(arg, dirpath, filenames):
+                mydir = dirnode.Dir(dirpath)
+                for name in filenames:
+                    if os.path.isfile(os.path.join(str(dirpath), name)):
+                        arg[mydir.File(name)] = True
+            for dirpath, dirnames, filenames in os.walk(dirnode.get_abspath()):
+                find_files(result, dirpath, filenames)
+            entry.walk(find_files, result)
+
+            slist.extend(list(result.keys()))
+        else:
+            raise SCons.Errors.UserError("Java resource must be File or Dir, not '%s'" % entry.__class__)
+
+    tlist = []
+    for f in slist:
+        target_path = _java_resource_file_target_path(f.rfile().get_abspath())
+        if target_path:
+            d = target[0]
+            t = d.File(target_path)
+            t.attributes.java_classdir = classdir
+            f.attributes.target_path = target_path
+            t.set_specific_source([f])
+            tlist.append(t)
+        else:
+            console.warning('java resource file "%s" does not match any '
+                            'resource path pattern of maven standard directory '
+                            'layout, ignored. \nsee '
+                            'https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html' % f)
+
+    return tlist, slist
+
+
 def process_java_sources(target, source, env):
     """Copy source file into .sources dir. """
     shutil.copy2(str(source[0]), str(target[0]))
@@ -365,6 +421,7 @@ def _generate_java_jar(target, sources, resources, env):
     if sources:
         cmd = '%s %s -d %s -classpath %s %s' % (
                 javac, options, classes_dir, classpath, ' '.join(sources))
+        console.debug(cmd)
         if echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None):
             return 1
 
@@ -383,6 +440,7 @@ def _generate_java_jar(target, sources, resources, env):
                     os.path.relpath(resource, resources_dir)))
 
     cmd = ' '.join(cmd)
+    console.debug(cmd)
     return echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None)
 
 
@@ -549,41 +607,22 @@ def generate_fat_jar(target, source, env):
     target = str(target[0])
     dep_jars = [str(dep) for dep in source]
 
-    # Create a new process for fatjar packaging to avoid GIL
-    global blade_path
-    cmd = 'PYTHONPATH=%s:$PYTHONPATH python -m fatjar %s %s' % (
-        blade_path, target, ' '.join(dep_jars))
-    p = subprocess.Popen(cmd,
-                         env=os.environ,
-                         stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE,
-                         shell=True,
-                         universal_newlines=True)
-    stdout, stderr = p.communicate()
-    if stdout:
-        console.warning('%s See %s for details.' % (
-            stdout.rstrip(), console.get_log_file()))
-    if stderr:
-        console.log(stderr)
-    return p.returncode
+    return _generate_fat_jar(target, dep_jars, env)
 
 
 def _generate_java_binary(target_name, onejar_path, jvm_flags, run_args):
     """generate a wrapper shell script to run jar"""
     onejar_name = os.path.basename(onejar_path)
-    full_path = os.path.abspath(onejar_path)
     target_file = open(target_name, 'w')
     target_file.write(
 """#!/bin/sh
 # Auto generated wrapper shell script by blade
 
+# *.one.jar must be in same dir
 jar=`dirname "$0"`/"%s"
-if [ ! -f "$jar" ]; then
-  jar="%s"
-fi
 
 exec java %s -jar "$jar" %s $@
-""" % (onejar_name, full_path, jvm_flags, run_args))
+""" % (onejar_name, jvm_flags, run_args))
     os.chmod(target_name, 0755)
     target_file.close()
 
@@ -680,6 +719,7 @@ def _generate_scala_jar(target, sources, resources, env):
 
     cmd = 'JAVACMD=%s %s -d %s -classpath %s %s %s' % (java, scalac, target,
             classpath, options, ' '.join(sources))
+    console.debug(cmd)
     if echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None):
         return 1
 
@@ -691,6 +731,7 @@ def _generate_scala_jar(target, sources, resources, env):
                 cmd.append("-C '%s' '%s'" % (resources_dir,
                     os.path.relpath(resource, resources_dir)))
 
+            console.debug(cmd)
             return echospawn(args=cmd, env=os.environ, sh=None, cmd=None, escape=None)
 
     return None
@@ -740,154 +781,6 @@ def generate_scala_test(target, source, env):
     return _generate_scala_test(target, jars, test_class_names, env)
 
 
-def process_package_source(target, source, env):
-    """Copy source file into .sources dir. """
-    shutil.copy2(str(source[0]), str(target[0]))
-    return None
-
-
-def _get_tar_mode_from_suffix(suffix):
-    return {
-        'tar' : 'w',
-        'tar.gz' : 'w:gz',
-        'tgz' : 'w:gz',
-        'tar.bz2' : 'w:bz2',
-        'tbz' : 'w:bz2',
-    }[suffix]
-
-
-def _archive_package_sources(package, sources, sources_dir):
-    """Archive sources into the package and return a list of source info. """
-    manifest = []
-    for s in sources:
-        f = str(s)
-        if f.startswith(sources_dir):
-            path = os.path.relpath(f, sources_dir)
-        else:
-            path = os.path.basename(f)
-        package(f, path)
-        manifest.append('%s %s' % (s.get_csig(), path))
-
-    return manifest
-
-
-_PACKAGE_MANIFEST = 'MANIFEST.TXT'
-
-
-def _generate_tar_package(target, sources, sources_dir, suffix):
-    """Generate a tar ball containing all of the source files. """
-    mode = _get_tar_mode_from_suffix(suffix)
-    tar = tarfile.open(target, mode)
-    manifest = _archive_package_sources(tar.add, sources, sources_dir)
-    manifest_path = '%s.MANIFEST' % target
-    m = open(manifest_path, 'w')
-    print >>m, '\n'.join(manifest) + '\n'
-    m.close()
-    tar.add(manifest_path, _PACKAGE_MANIFEST)
-    tar.close()
-    return None
-
-
-def _generate_zip_package(target, sources, sources_dir):
-    """Generate a zip archive containing all of the source files. """
-    zip = zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED)
-    manifest = _archive_package_sources(zip.write, sources, sources_dir)
-    zip.writestr(_PACKAGE_MANIFEST, '\n'.join(manifest) + '\n')
-    zip.close()
-    return None
-
-
-def generate_package(target, source, env):
-    """Generate a package containing all of the source files. """
-    target = str(target[0])
-    sources_dir = target + '.sources'
-    suffix = env['PACKAGESUFFIX']
-    if suffix == 'zip':
-        return _generate_zip_package(target, source, sources_dir)
-    else:
-        return _generate_tar_package(target, source, sources_dir, suffix)
-
-
-def generate_shell_test_data(target, source, env):
-    """Generate test data used by shell script for subsequent execution. """
-    target = str(target[0])
-    testdata = open(target, 'w')
-    for i in range(0, len(source), 2):
-        print >>testdata, os.path.abspath(str(source[i])), source[i + 1]
-    testdata.close()
-    return None
-
-
-def generate_shell_test(target, source, env):
-    """Generate a shell wrapper to run shell scripts in source one by one. """
-    target = str(target[0])
-    script = open(target, 'w')
-    print >>script, '#!/bin/sh'
-    print >>script, '# Auto generated wrapper shell script by blade\n'
-    print >>script, 'set -e\n'
-    for s in source:
-        print >>script, '. %s' % os.path.abspath(str(s))
-    print >>script
-    script.close()
-    os.chmod(target, 0755)
-    return None
-
-
-def generate_proto_go_source(target, source, env):
-    """Generate go source file by invoking protobuf compiler. """
-    source = source[0]
-    global proto_import_re
-    import_protos = proto_import_re.findall(source.get_text_contents())
-    parameters = 'import_prefix=%s/' % env['PROTOBUFGOPATH']
-    if import_protos:
-        proto_mappings = []
-        for proto in import_protos:
-            dir = os.path.dirname(proto)
-            name = os.path.basename(proto)
-            proto_mappings.append('M%s=%s' % (
-                                  proto, os.path.join(dir, name.replace('.', '_'))))
-        parameters += ',%s' % ','.join(proto_mappings)
-
-    cmd = '%s --proto_path=. --plugin=protoc-gen-go=%s -I. %s -I=%s --go_out=%s:%s %s' % (
-           env['PROTOC'], env['PROTOCGOPLUGIN'], env['PROTOBUFINCS'],
-           os.path.dirname(str(source)), parameters, env['BUILDDIR'], source)
-    return echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None)
-
-
-def copy_proto_go_source(target, source, env):
-    """Copy go source file generated by protobuf into go standard directory. """
-    shutil.copy2(str(source[0]), str(target[0]))
-    return None
-
-
-def _generate_go_package(target, source, env):
-    go, go_home = env['GOCMD'], env['GOHOME']
-    cmd = 'GOPATH=%s %s install %s' % (go_home, go, env['GOPACKAGE'])
-    return echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None)
-
-
-def generate_go_library(target, source, env):
-    """
-    Generate go package object. Note that the sources should be
-    in the same directory and the go tool compiles them as a whole
-    by designating the package path.
-    """
-    return _generate_go_package(target, source, env)
-
-
-def generate_go_binary(target, source, env):
-    """Generate go command executable. """
-    return _generate_go_package(target, source, env)
-
-
-def generate_go_test(target, source, env):
-    """Generate go test binary. """
-    go, go_home = env['GOCMD'], env['GOHOME']
-    cmd = 'GOPATH=%s %s test -c -o %s %s' % (
-          go_home, go, target[0], env['GOPACKAGE'])
-    return echospawn(args=[cmd], env=os.environ, sh=None, cmd=None, escape=None)
-
-
 def MakeAction(cmd, cmdstr):
     global option_verbose
     if option_verbose:
@@ -927,12 +820,12 @@ def error_colorize(message):
     return console.inerasable(''.join(colored_message))
 
 
-def _echo(stdout, stderr):
-    """Echo messages to stdout and stderr. """
+def _colored_echo(stdout, stderr):
+    """Echo error colored message"""
     if stdout:
-        sys.stdout.write(stdout)
+        sys.stdout.write(error_colorize(stdout))
     if stderr:
-        sys.stderr.write(stderr)
+        sys.stderr.write(error_colorize(stderr))
 
 
 def echospawn(sh, escape, cmd, args, env):
@@ -942,29 +835,22 @@ def echospawn(sh, escape, cmd, args, env):
         asciienv[key] = str(value)
 
     cmdline = ' '.join(args)
-    console.debug(cmdline)
-    p = subprocess.Popen(cmdline,
-                         env=asciienv,
-                         stderr=subprocess.PIPE,
-                         stdout=subprocess.PIPE,
-                         shell=True,
-                         universal_newlines=True)
-    stdout, stderr = p.communicate()
-
-    global option_verbose
-    if not option_verbose:
-        if stdout:
-            stdout = error_colorize(stdout)
-        if stderr:
-            stderr = error_colorize(stderr)
+    p = subprocess.Popen(
+        cmdline,
+        env=asciienv,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        shell=True,
+        universal_newlines=True)
+    (stdout, stderr) = p.communicate()
 
     if p.returncode:
         if p.returncode != -signal.SIGINT:
             # Error
-            _echo(stdout, stderr)
+            _colored_echo(stdout, stderr)
     else:
         # Only warnings
-        _echo(stdout, stderr)
+        _colored_echo(stdout, stderr)
 
     return p.returncode
 
@@ -1149,7 +1035,9 @@ def get_link_program_message():
 def setup_compliation_verbose(top_env, color_enabled, verbose):
     """Generates color and verbose message. """
     console.color_enabled = color_enabled
-    top_env["SPAWN"] = echospawn
+
+    if not verbose:
+        top_env["SPAWN"] = echospawn
 
     compile_source_message = get_compile_source_message()
     link_program_message = get_link_program_message()
@@ -1178,8 +1066,7 @@ def setup_compliation_verbose(top_env, color_enabled, verbose):
                 LINKCOMSTR = link_program_message,
                 JAVACCOMSTR = compile_source_message,
                 JARCOMSTR = jar_message,
-                LEXCOMSTR = compile_source_message,
-                YACCCOMSTR = compile_source_message)
+                LEXCOMSTR = compile_source_message)
 
 
 proto_import_re = re.compile(r'^import\s+"(\S+)"\s*;\s*$', re.M)
@@ -1216,7 +1103,7 @@ def proto_scan_func(node, env, path, arg):
 
 def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
                          protobuf_path, protobuf_incs_str,
-                         protoc_php_plugin, protobuf_php_path, protoc_go_plugin):
+                         protoc_php_plugin, protobuf_php_path):
     compile_proto_cc_message = console.erasable('%sCompiling %s$SOURCE%s to cc source%s' % \
         (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
 
@@ -1229,23 +1116,17 @@ def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
     compile_proto_python_message = console.erasable('%sCompiling %s$SOURCE%s to python source%s' % \
         (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
 
-    compile_proto_go_message = console.erasable('%sCompiling %s$SOURCE%s to go source%s' % \
-        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
-
-    copy_proto_go_source_message = console.erasable('%sCopying %s$SOURCE%s to go directory%s' %
-        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
-
     generate_proto_descriptor_message = console.inerasable('%sGenerating proto descriptor set %s$TARGET%s%s' % (
         colors('green'), colors('purple'), colors('green'), colors('end')))
 
     proto_bld = SCons.Builder.Builder(action = MakeAction(
-        "%s --proto_path=. -I. %s -I=`dirname $SOURCE` --cpp_out=%s $PROTOCCPPPLUGINFLAGS $SOURCE" % (
+        "%s --proto_path=. -I. %s -I=`dirname $SOURCE` --cpp_out=%s $SOURCE" % (
             protoc_bin, protobuf_incs_str, build_dir),
         compile_proto_cc_message))
     top_env.Append(BUILDERS = {"Proto" : proto_bld})
 
     proto_java_bld = SCons.Builder.Builder(action = MakeAction(
-        "%s --proto_path=. --proto_path=%s --java_out=%s/`dirname $SOURCE` $PROTOCJAVAPLUGINFLAGS $SOURCE" % (
+        "%s --proto_path=. --proto_path=%s --java_out=%s/`dirname $SOURCE` $SOURCE" % (
             protoc_java_bin, protobuf_path, build_dir),
         compile_proto_java_message))
     top_env.Append(BUILDERS = {"ProtoJava" : proto_java_bld})
@@ -1257,20 +1138,10 @@ def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
     top_env.Append(BUILDERS = {"ProtoPhp" : proto_php_bld})
 
     proto_python_bld = SCons.Builder.Builder(action = MakeAction(
-        "%s --proto_path=. -I. %s -I=`dirname $SOURCE` --python_out=%s $PROTOCPYTHONPLUGINFLAGS $SOURCE" % (
+        "%s --proto_path=. -I. %s -I=`dirname $SOURCE` --python_out=%s $SOURCE" % (
             protoc_bin, protobuf_incs_str, build_dir),
         compile_proto_python_message))
     top_env.Append(BUILDERS = {"ProtoPython" : proto_python_bld})
-
-    proto_go_bld = SCons.Builder.Builder(action = MakeAction(
-        generate_proto_go_source, compile_proto_go_message),
-        PROTOC = protoc_bin, PROTOCGOPLUGIN = protoc_go_plugin,
-        PROTOBUFINCS = protobuf_incs_str, BUILDDIR = build_dir)
-    top_env.Append(BUILDERS = {"ProtoGo" : proto_go_bld})
-
-    proto_go_source_bld = SCons.Builder.Builder(
-        action = MakeAction(copy_proto_go_source, copy_proto_go_source_message))
-    top_env.Append(BUILDERS = {"ProtoGoSource" : proto_go_source_bld})
 
     proto_descriptor_bld = SCons.Builder.Builder(action = MakeAction(
         '%s --proto_path=. -I. %s -I=`dirname $SOURCE` '
@@ -1278,10 +1149,6 @@ def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
         '$SOURCES' % (protoc_bin, protobuf_incs_str),
         generate_proto_descriptor_message))
     top_env.Append(BUILDERS = {"ProtoDescriptors" : proto_descriptor_bld})
-
-    top_env.Replace(PROTOCCPPPLUGINFLAGS = "",
-                    PROTOCJAVAPLUGINFLAGS = "",
-                    PROTOCPYTHONPLUGINFLAGS = "")
 
     top_env.Append(PROTOPATH = ['.', protobuf_path])
     proto_scanner = top_env.Scanner(name = 'ProtoScanner',
@@ -1445,33 +1312,13 @@ def setup_scala_builders(top_env, scala_home):
     top_env.Append(BUILDERS = {"ScalaTest" : scala_test_bld})
 
 
-def setup_go_builders(top_env, go_cmd, go_home):
-    if go_cmd:
-        top_env.Replace(GOCMD=go_cmd)
-    if go_home:
-        top_env.Replace(GOHOME=go_home)
-
-    go_library_message = console.inerasable('%sGenerating Go Package %s$TARGET%s%s' %
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    go_library_builder = SCons.Builder.Builder(action = MakeAction(
-        generate_go_library, go_library_message))
-    top_env.Append(BUILDERS = {"GoLibrary" : go_library_builder})
-
-    go_binary_message = console.inerasable('%sGenerating Go Executable %s$TARGET%s%s' %
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    go_binary_builder = SCons.Builder.Builder(action = MakeAction(
-        generate_go_binary, go_binary_message))
-    top_env.Append(BUILDERS = {"GoBinary" : go_binary_builder})
-
-    go_test_message = console.inerasable('%sGenerating Go Test %s$TARGET%s%s' %
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    go_test_builder = SCons.Builder.Builder(action = MakeAction(
-        generate_go_test, go_test_message))
-    top_env.Append(BUILDERS = {"GoTest" : go_test_builder})
-
-
-def setup_lex_yacc_builders(top_env):
-    top_env.Replace(LEXCOM = "$LEX $LEXFLAGS -o $TARGET $SOURCES")
+def setup_yacc_builders(top_env):
+    compile_yacc_message = console.erasable('%sYacc %s$SOURCE%s to $TARGET%s' % \
+        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
+    yacc_bld = SCons.Builder.Builder(action = MakeAction(
+        'bison $YACCFLAGS -d -o $TARGET $SOURCE',
+        compile_yacc_message))
+    top_env.Append(BUILDERS = {"Yacc" : yacc_bld})
 
 
 def setup_resource_builders(top_env):
@@ -1489,12 +1336,12 @@ def setup_resource_builders(top_env):
 
 
 def setup_python_builders(top_env):
-    compile_python_egg_message = console.inerasable('%sGenerating Python Egg %s$TARGET%s%s' % \
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    compile_python_library_message = console.inerasable('%sGenerating Python Library %s$TARGET%s%s' % \
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    compile_python_binary_message = console.inerasable('%sGenerating Python Binary %s$TARGET%s%s' % \
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
+    compile_python_egg_message = console.erasable('%sGenerating python egg %s$TARGET%s%s' % \
+        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
+    compile_python_library_message = console.erasable('%sGenerating python library %s$TARGET%s%s' % \
+        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
+    compile_python_binary_message = console.inerasable('%sGenerating python binary %s$TARGET%s%s' % \
+        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
 
     python_egg_bld = SCons.Builder.Builder(action = MakeAction(generate_python_egg,
         compile_python_egg_message))
@@ -1507,40 +1354,10 @@ def setup_python_builders(top_env):
     top_env.Append(BUILDERS = {"PythonBinary" : python_binary_bld})
 
 
-def setup_package_builders(top_env):
-    source_message = console.erasable('%sProcess Package Source %s$SOURCES%s%s' % (
-        colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
-    source_bld = SCons.Builder.Builder(
-        action = MakeAction(process_package_source, source_message))
-    top_env.Append(BUILDERS = {"PackageSource" : source_bld})
-
-    package_message = console.inerasable('%sCreating Package %s$TARGET%s%s' % (
-        colors('green'), colors('purple'), colors('green'), colors('end')))
-    package_bld = SCons.Builder.Builder(
-        action = MakeAction(generate_package, package_message))
-    top_env.Append(BUILDERS = {"Package" : package_bld})
-
-
-def setup_shell_builders(top_env):
-    shell_test_data_message = console.erasable('%sGenerating Shell Test Data %s$TARGET%s%s' %
-        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
-    shell_test_data_bld = SCons.Builder.Builder(action = MakeAction(
-        generate_shell_test_data, shell_test_data_message))
-    top_env.Append(BUILDERS = {"ShellTestData" : shell_test_data_bld})
-
-    shell_test_message = console.inerasable('%sGenerating Shell Test %s$TARGET%s%s' %
-        (colors('green'), colors('purple'), colors('green'), colors('end')))
-    shell_test_bld = SCons.Builder.Builder(action = MakeAction(
-        generate_shell_test, shell_test_message))
-    top_env.Append(BUILDERS = {"ShellTest" : shell_test_bld})
-
-
 def setup_other_builders(top_env):
-    setup_lex_yacc_builders(top_env)
+    setup_yacc_builders(top_env)
     setup_resource_builders(top_env)
     setup_python_builders(top_env)
-    setup_package_builders(top_env)
-    setup_shell_builders(top_env)
 
 
 def setup_swig_builders(top_env, build_dir):
@@ -1571,7 +1388,7 @@ def setup_swig_builders(top_env, build_dir):
     top_env.Append(BUILDERS={"SwigPhp" : swig_php_bld})
 
 
-def _exec_get_version_info(cmd, cwd):
+def _exec_get_version_info(cmd, cwd, dirname):
     lc_all_env = os.environ
     lc_all_env['LC_ALL'] = 'POSIX'
     p = subprocess.Popen(cmd,
@@ -1584,7 +1401,7 @@ def _exec_get_version_info(cmd, cwd):
     if p.returncode:
         return None
     else:
-        return stdout.replace('\n', '\\n"\n"')
+        return stdout.replace('\n', '\\n\\\n')
 
 
 def _get_version_info(blade_root_dir, svn_roots):
@@ -1593,7 +1410,7 @@ def _get_version_info(blade_root_dir, svn_roots):
     if os.path.exists("%s/.git" % blade_root_dir):
         cmd = "git log -n 1"
         dirname = os.path.dirname(blade_root_dir)
-        version_info = _exec_get_version_info(cmd, None)
+        version_info = _exec_get_version_info(cmd, None, dirname)
         if version_info:
             svn_info_map[dirname] = version_info
         return svn_info_map
@@ -1604,14 +1421,15 @@ def _get_version_info(blade_root_dir, svn_roots):
         svn_dir = os.path.basename(root_dir_realpath)
 
         cmd = 'svn info %s' % svn_dir
-        version_info = _exec_get_version_info(cmd, svn_working_dir)
+        cwd = svn_working_dir
+        version_info = _exec_get_version_info(cmd, cwd, root_dir)
         if not version_info:
             cmd = 'git ls-remote --get-url && git branch | grep "*" && git log -n 1'
-            version_info = _exec_get_version_info(cmd, root_dir_realpath)
+            cwd = root_dir_realpath
+            version_info = _exec_get_version_info(cmd, cwd, root_dir)
             if not version_info:
-                console.warning('Failed to get version control info in %s' % root_dir)
-
-        if version_info:
+                console.warning('failed to get version control info in %s' % root_dir)
+                continue
             svn_info_map[root_dir] = version_info
 
     return svn_info_map
@@ -1624,15 +1442,25 @@ def generate_version_file(top_env, blade_root_dir, build_dir,
 
     if not os.path.exists(build_dir):
         os.makedirs(build_dir)
-    filename = os.path.join(build_dir, 'version.cpp')
+    filename = '%s/version.cpp' % build_dir
     version_cpp = open(filename, 'w')
 
     print >>version_cpp, '/* This file was generated by blade */'
     print >>version_cpp, 'extern "C" {'
     print >>version_cpp, 'namespace binary_version {'
     print >>version_cpp, 'extern const int kSvnInfoCount = %d;' % svn_info_len
-    print >>version_cpp, 'extern const char* const kSvnInfo[%d] = {%s};' % (
-            svn_info_len, ', '.join(['"%s"' % v for v in svn_info_map.values()]))
+
+    svn_info_array = '{'
+    for idx in range(svn_info_len):
+        key_with_idx = svn_info_map.keys()[idx]
+        svn_info_line = '"%s"' % svn_info_map[key_with_idx]
+        svn_info_array += svn_info_line
+        if idx != (svn_info_len - 1):
+            svn_info_array += ','
+    svn_info_array += '}'
+
+    print >>version_cpp, 'extern const char* const kSvnInfo[%d] = %s;' % (
+            svn_info_len, svn_info_array)
     print >>version_cpp, 'extern const char kBuildType[] = "%s";' % profile
     print >>version_cpp, 'extern const char kBuildTime[] = "%s";' % time.asctime()
     print >>version_cpp, 'extern const char kBuilderName[] = "%s";' % os.getenv('USER')

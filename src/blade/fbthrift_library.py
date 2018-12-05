@@ -59,7 +59,6 @@ class FBThriftLibrary(CcTarget):
                           'fbthrift_library',
                           srcs,
                           deps,
-                          None,
                           '',
                           [], [], [], optimize, [], [],
                           blade,

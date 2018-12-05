@@ -4,7 +4,7 @@
 # Author: Feng Chen <phongchen@tencent.com>
 
 
-"""Define proto_library target
+"""Define grpc_proto_library target
 """
 
 
@@ -17,13 +17,13 @@ import configparse
 import build_rules
 import java_targets
 from blade_util import var_to_list
-from cc_targets import CcTarget
+from cc_targets import ProtoLibrary
 
 
-class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
+class GrpcProtoLibrary(ProtoLibrary, java_targets.JavaTargetMixIn):
     """A scons proto library target subclass.
 
-    This class is derived from SconsCcTarget.
+    This class is derived from SconsProtoLibrary.
 
     """
     def __init__(self,
@@ -41,11 +41,9 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
         Init the proto target.
 
         """
-        srcs_list = var_to_list(srcs)
-        self._check_proto_srcs_name(srcs_list)
-        CcTarget.__init__(self,
+        ProtoLibrary.__init__(self,
                           name,
-                          'proto_library',
+                          'grpc_proto_library',
                           srcs,
                           deps,
                           '',
@@ -53,45 +51,11 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
                           blade,
                           kwargs)
 
-        proto_config = configparse.blade_config.get_config('proto_library_config')
-        protobuf_libs = var_to_list(proto_config['protobuf_libs'])
-        protobuf_java_libs = var_to_list(proto_config['protobuf_java_libs'])
-
-        # Hardcode deps rule to thirdparty protobuf lib.
-        self._add_hardcode_library(protobuf_libs)
-        self._add_hardcode_java_library(protobuf_java_libs)
-
-        # Normally a proto target depends on another proto target when
-        # it references a message defined in that target. Then in the
-        # generated code there is public API with return type/arguments
-        # defined outside and in java it needs to export that dependency,
-        # which is also the case for java protobuf library.
-        self.data['exported_deps'] = self._unify_deps(var_to_list(deps))
-        self.data['exported_deps'] += self._unify_deps(protobuf_java_libs)
-
-        # Link all the symbols by default
-        self.data['link_all_symbols'] = True
-        self.data['deprecated'] = deprecated
-        self.data['source_encoding'] = source_encoding
-
-        self.data['java_sources_explict_dependency'] = []
-        self.data['python_vars'] = []
-        self.data['python_sources'] = []
-        self.data['generate_descriptors'] = generate_descriptors
-
-    def _check_proto_srcs_name(self, srcs_list):
-        """_check_proto_srcs_name.
-
-        Checks whether the proto file's name ends with 'proto'.
-
-        """
-        for src in srcs_list:
-            if not src.endswith('.proto'):
-                console.error_exit('Invalid proto file name %s' % src)
+        grpc_config = configparse.blade_config.get_config('grpc_proto_library_config')
 
     def _check_proto_deps(self):
-        """Only proto_library or gen_rule target is allowed as deps. """
-        proto_config = configparse.blade_config.get_config('proto_library_config')
+        """Only grpc_proto_library or gen_rule target is allowed as deps. """
+        proto_config = configparse.blade_config.get_config('grpc_proto_library_config')
         protobuf_libs = var_to_list(proto_config['protobuf_libs'])
         protobuf_java_libs = var_to_list(proto_config['protobuf_java_libs'])
         protobuf_libs = [self._unify_dep(d) for d in protobuf_libs + protobuf_java_libs]
@@ -99,18 +63,14 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
             if dkey in protobuf_libs:
                 continue
             dep = self.target_database[dkey]
-            if dep.type != 'proto_library' and dep.type != 'gen_rule':
+            if dep.type != 'grpc_proto_library' and dep.type != 'gen_rule':
                 console.error_exit('%s: Invalid dep %s. Proto_library can '
-                    'only depend on proto_library or gen_rule.' %
+                    'only depend on grpc_proto_library or gen_rule.' %
                     (self.fullname, dep.fullname))
 
     def _prepare_to_generate_rule(self):
-        CcTarget._prepare_to_generate_rule(self)
+        ProtoLibrary._prepare_to_generate_rule(self)
         self._check_proto_deps()
-
-    def _generate_header_files(self):
-        """Whether this target generates header files during building."""
-        return True
 
     def _proto_gen_files(self, src):
         """_proto_gen_files. """
@@ -293,7 +253,7 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
         self._write_rule('%s.Depends(%s, %s)' % (
                          env_name, self._objs_name(), sources))
 
-        # pb.cc depends on other proto_library
+        # pb.cc depends on other grpc_proto_library
         for dep_name in self.deps:
             dep = self.target_database[dep_name]
             if not dep._generate_header_files():
@@ -305,7 +265,7 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
         self._cc_library()
 
 
-def proto_library(name,
+def grpc_proto_library(name,
                   srcs=[],
                   deps=[],
                   optimize=[],
@@ -313,8 +273,8 @@ def proto_library(name,
                   generate_descriptors=False,
                   source_encoding='iso-8859-1',
                   **kwargs):
-    """proto_library target. """
-    proto_library_target = ProtoLibrary(name,
+    """grpc_proto_library target. """
+    grpc_proto_library_target = ProtoLibrary(name,
                                         srcs,
                                         deps,
                                         optimize,
@@ -323,7 +283,7 @@ def proto_library(name,
                                         source_encoding,
                                         blade.blade,
                                         kwargs)
-    blade.blade.register_target(proto_library_target)
+    blade.blade.register_target(grpc_proto_library_target)
 
 
-build_rules.register_function(proto_library)
+build_rules.register_function(grpc_proto_library)

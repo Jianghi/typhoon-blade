@@ -51,7 +51,6 @@ class JavaJarTarget(Target):
                         'java_jar',
                         srcs,
                         deps,
-                        None,
                         blade,
                         kwargs)
 

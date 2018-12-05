@@ -39,8 +39,7 @@ class BinaryRunner(object):
                          'java_test',
                          'py_binary',
                          'py_test',
-                         'scala_test',
-                         'sh_test']
+                         'scala_test']
         self.target_database = target_database
 
     def _executable(self, target):
@@ -90,18 +89,17 @@ class BinaryRunner(object):
 
     def _prepare_env(self, target):
         """Prepare the test environment. """
-        runfiles_dir = self._runfiles_dir(target)
-        shutil.rmtree(runfiles_dir, ignore_errors=True)
-        os.mkdir(runfiles_dir)
-        # Build profile symlink
+        shutil.rmtree(self._runfiles_dir(target), ignore_errors=True)
+        os.mkdir(self._runfiles_dir(target))
+        # add build profile symlink
         profile_link_name = os.path.basename(self.build_dir)
         os.symlink(os.path.abspath(self.build_dir),
-                   os.path.join(runfiles_dir, profile_link_name))
+                   os.path.join(self._runfiles_dir(target), profile_link_name))
 
-        # Prebuilt library symlink
+        # add pre build library symlink
         for prebuilt_file in self._get_prebuilt_files(target):
             src = os.path.abspath(prebuilt_file[0])
-            dst = os.path.join(runfiles_dir, prebuilt_file[1])
+            dst = os.path.join(self._runfiles_dir(target), prebuilt_file[1])
             if os.path.lexists(dst):
                 console.warning('trying to make duplicate prebuilt symlink:\n'
                                 '%s -> %s\n'
@@ -114,7 +112,8 @@ class BinaryRunner(object):
 
         self._prepare_test_data(target)
         run_env = dict(os.environ)
-        environ_add_path(run_env, 'LD_LIBRARY_PATH', runfiles_dir)
+        environ_add_path(run_env, 'LD_LIBRARY_PATH',
+                         self._runfiles_dir(target))
         config = configparse.blade_config.get_config('cc_binary_config')
         run_lib_paths = config['run_lib_paths']
         if run_lib_paths:
@@ -168,26 +167,6 @@ class BinaryRunner(object):
                 shutil.copy2(src, dest_path)
             elif os.path.isdir(src):
                 shutil.copytree(src, dest_path)
-
-        self._prepare_extra_test_data(target)
-
-    def _prepare_extra_test_data(self, target):
-        """Prepare extra test data specified in the .testdata file if it exists. """
-        testdata = os.path.join(self.build_dir, target.path,
-                                '%s.testdata' % target.name)
-        if os.path.isfile(testdata):
-            runfiles_dir = self._runfiles_dir(target)
-            for line in open(testdata):
-                data = line.strip().split()
-                if len(data) == 1:
-                    src, dst = data[0], ''
-                else:
-                    src, dst = data[0], data[1]
-                dst = os.path.join(runfiles_dir, dst)
-                dst_dir = os.path.dirname(dst)
-                if not os.path.isdir(dst_dir):
-                    os.makedirs(dst_dir)
-                shutil.copy2(src, dst)
 
     def _clean_target(self, target):
         """clean the test target environment. """

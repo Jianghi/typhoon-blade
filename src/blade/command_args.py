@@ -187,11 +187,6 @@ class CmdArguments(object):
             help='Generate dynamic libraries.')
 
         parser.add_argument(
-            '--generate-package', dest='generate_package',
-            action='store_true', default=False,
-            help='Generate packages for package target.')
-
-        parser.add_argument(
             '--generate-java', dest='generate_java',
             action='store_true', default=False,
             help='Generate java files for proto_library, thrift_library and '
@@ -201,16 +196,6 @@ class CmdArguments(object):
             '--generate-php', dest='generate_php',
             action='store_true', default=False,
             help='Generate php files for proto_library and swig_library.')
-
-        parser.add_argument(
-            '--generate-python', dest='generate_python',
-            action='store_true', default=False,
-            help='Generate python files for proto_library and thrift_library.')
-
-        parser.add_argument(
-            '--generate-go', dest='generate_go',
-            action='store_true', default=False,
-            help='Generate go files for proto_library.')
 
     def __add_build_actions_arguments(self, parser):
         """Add build related action arguments. """
@@ -293,10 +278,6 @@ class CmdArguments(object):
             '--output-to-dot', dest='output_to_dot', type=str,
             help='The name of file to output query results as dot(graphviz) '
                  'format.')
-        parser.add_argument(
-            '--output-tree', dest='output_tree',
-            action='store_true', default=False,
-            help='Show the dependency tree of the specified target.')
 
     def _add_clean_arguments(self, parser):
         """Add clean arguments for parser. """

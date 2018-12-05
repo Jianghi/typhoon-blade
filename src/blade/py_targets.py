@@ -6,9 +6,7 @@
 
 
 """
-
-This is python targets module which generates python egg,
-python library, python binary, python test.
+ This is python egg target which generates python egg for user.
 
 """
 
@@ -23,7 +21,7 @@ from blade_util import var_to_list
 from target import Target
 
 
-class PythonEgg(Target):
+class PythonEggTarget(Target):
     """A python egg target subclass.
 
     This class is derived from SconsTarget and generates python egg package.
@@ -45,7 +43,6 @@ class PythonEgg(Target):
                         'py_egg',
                         srcs,
                         deps,
-                        None,
                         blade,
                         kwargs)
 
@@ -103,12 +100,12 @@ def py_egg(name,
            prebuilt=False,
            **kwargs):
     """python egg. """
-    target = PythonEgg(name,
-                       srcs,
-                       deps,
-                       prebuilt,
-                       blade.blade,
-                       kwargs)
+    target = PythonEggTarget(name,
+                             srcs,
+                             deps,
+                             prebuilt,
+                             blade.blade,
+                             kwargs)
     blade.blade.register_target(target)
 
 
@@ -124,8 +121,7 @@ class PythonTarget(Target):
                  type,
                  srcs,
                  deps,
-                 base,
-                 visibility,
+                 blade,
                  kwargs):
         """Init method. """
         srcs = var_to_list(srcs)
@@ -136,28 +132,15 @@ class PythonTarget(Target):
                         type,
                         srcs,
                         deps,
-                        visibility,
-                        blade.blade,
+                        blade,
                         kwargs)
 
-        if base:
-            if not base.startswith('//'):
-                console.error_exit('%s: Invalid base directory %s. Option base should '
-                                   'be a directory starting with \'//\' from BLADE_ROOT directory.' %
-                                   (self.fullname, base))
-            self.data['python_base'] = base[2:]
-        self.data['python_sources'] = [self._source_file_path(s) for s in srcs]
-
-    def _prepare_to_generate_rule(self):
-        self._clone_env()
-        env_name = self._env_name()
-        self._write_rule('%s.Replace(BUILD_DIR="%s")' % (
-            env_name, self.build_path))
-        self._write_rule('%s.Replace(BASE_DIR="%s")' % (
-            env_name, self.data.get('python_base', '')))
+        self.data['python_sources'] = []
+        for src in srcs:
+            self.data['python_sources'].append(self._source_file_path(src))
 
 
-class PythonLibrary(PythonTarget):
+class PythonLibraryTarget(PythonTarget):
     """A python library target subclass.
 
     This class is derived from SconsTarget and generates python library package.
@@ -167,8 +150,8 @@ class PythonLibrary(PythonTarget):
                  name,
                  srcs,
                  deps,
-                 base,
-                 visibility,
+                 prebuilt,
+                 blade,
                  kwargs):
         """Init method. """
         PythonTarget.__init__(self,
@@ -176,9 +159,11 @@ class PythonLibrary(PythonTarget):
                               'py_library',
                               srcs,
                               deps,
-                              base,
-                              visibility,
+                              blade,
                               kwargs)
+
+        if prebuilt:
+            self.type = 'prebuilt_py_library'
 
     def scons_rules(self):
         """scons_rules.
@@ -188,49 +173,54 @@ class PythonLibrary(PythonTarget):
         It outputs the scons rules according to user options.
 
         """
-        self._prepare_to_generate_rule()
+        self._clone_env()
         env_name = self._env_name()
         var_name = self._var_name()
 
-        sources = self.data.get('python_sources', [])
-        if sources:
-            self._write_rule('%s = %s.PythonLibrary("%s", %s)' % (
-                             var_name, env_name,
-                             '%s.pylib' % self._target_file_path(),
-                             sources))
-            self.data['python_var'] = var_name
-            dep_var_list = []
-            targets = self.blade.get_build_targets()
-            for dep in self.deps:
-                var = targets[dep].data.get('python_var')
-                if var:
-                    dep_var_list.append(var)
+        if self.type == 'prebuilt_py_library':
+            return
 
-            for dep_var in dep_var_list:
-                self._write_rule('%s.Depends(%s, %s)' % (
-                                 env_name, var_name, dep_var))
+        self._write_rule('%s["BUILD_DIR"] = "%s"' % (env_name, self.build_path))
+
+        source_files = self.data.get('python_sources', [])
+        target_library_file = '%s.pylib' % self._target_file_path()
+        self._write_rule('%s = %s.PythonLibrary(["%s"], %s)' % (
+                         var_name,
+                         env_name,
+                         target_library_file,
+                         source_files))
+        self.data['python_var'] = var_name
+        dep_var_list = []
+        targets = self.blade.get_build_targets()
+        for dep in self.deps:
+            var = targets[dep].data.get('python_var')
+            if var:
+                dep_var_list.append(var)
+
+        for dep_var in dep_var_list:
+            self._write_rule('%s.Depends(%s, %s)' % (
+                             env_name, var_name, dep_var))
 
 
 def py_library(name,
                srcs=[],
                deps=[],
-               base=None,
-               visibility=None,
+               prebuilt=False,
                **kwargs):
     """python library. """
-    target = PythonLibrary(name,
-                           srcs,
-                           deps,
-                           base,
-                           visibility,
-                           kwargs)
+    target = PythonLibraryTarget(name,
+                                 srcs,
+                                 deps,
+                                 prebuilt,
+                                 blade.blade,
+                                 kwargs)
     blade.blade.register_target(target)
 
 
 build_rules.register_function(py_library)
 
 
-class PythonBinary(PythonTarget):
+class PythonBinaryTarget(PythonTarget):
     """A python binary target subclass.
 
     This class is derived from SconsTarget and generates python binary package.
@@ -241,7 +231,7 @@ class PythonBinary(PythonTarget):
                  srcs,
                  deps,
                  main,
-                 base,
+                 blade,
                  kwargs):
         """Init method. """
         srcs = var_to_list(srcs)
@@ -252,10 +242,8 @@ class PythonBinary(PythonTarget):
                               'py_binary',
                               srcs,
                               deps,
-                              base,
-                              None,
+                              blade,
                               kwargs)
-
         self.data['run_in_shell'] = True
         if main:
             self.data['main'] = main
@@ -265,14 +253,13 @@ class PythonBinary(PythonTarget):
             else:
                 console.error_exit(
                     '%s: The entry file must be specified by the "main" '
-                    'argument if there are more than one srcs' % self.fullname)
+                    'argument if more than 1 srcs' % self.fullname)
 
     def _get_entry(self):
         main = self.data['main']
         full_path = os.path.normpath(os.path.join(self.path, main))[:-3]
-        base_path = self.data.get('python_base', '')
-        rel_path = os.path.relpath(full_path, base_path)
-        return rel_path.replace('/', '.')
+        return full_path.replace('/', '.')
+
 
     def scons_rules(self):
         """scons_rules.
@@ -282,46 +269,47 @@ class PythonBinary(PythonTarget):
         It outputs the scons rules according to user options.
 
         """
-        self._prepare_to_generate_rule()
+        self._clone_env()
         env_name = self._env_name()
         var_name = self._var_name()
 
         self._write_rule('%s.Append(ENTRY="%s")' % (env_name, self._get_entry()))
+        self._write_rule('%s["BUILD_DIR"] = "%s"' % (env_name, self.build_path))
         targets = self.blade.get_build_targets()
-        sources = self.data.get('python_sources', [])
+        source_files = self.data.get('python_sources', [])
         dep_var_list = []
         for dep in self.expanded_deps:
             python_var = targets[dep].data.get('python_var')
             if python_var:
                 dep_var_list.append(python_var)
 
-        self._write_rule('%s = %s.PythonBinary("%s", %s + [%s])' % (
-                         var_name,
-                         env_name,
-                         self._target_file_path(),
-                         sources, ','.join(dep_var_list)))
+        target_binary_file = self._target_file_path()
+        self._write_rule('%s = %s.PythonBinary(["%s"], %s + [%s])' % (
+                          var_name,
+                          env_name,
+                          target_binary_file,
+                          source_files, ','.join(dep_var_list)))
 
 
 def py_binary(name,
               srcs=[],
               deps=[],
               main=None,
-              base=None,
               **kwargs):
     """python binary. """
-    target = PythonBinary(name,
-                          srcs,
-                          deps,
-                          main,
-                          base,
-                          kwargs)
+    target = PythonBinaryTarget(name,
+                                srcs,
+                                deps,
+                                main,
+                                blade.blade,
+                                kwargs)
     blade.blade.register_target(target)
 
 
 build_rules.register_function(py_binary)
 
 
-class PythonTest(PythonBinary):
+class PythonTestTarget(PythonBinaryTarget):
     """A python test target subclass.
 
     This class is derived from SconsTarget and generates python test.
@@ -332,17 +320,18 @@ class PythonTest(PythonBinary):
                  srcs,
                  deps,
                  main,
-                 base,
                  testdata,
+                 blade,
                  kwargs):
         """Init method. """
-        PythonBinary.__init__(self,
-                              name,
-                              srcs,
-                              deps,
-                              main,
-                              base,
-                              kwargs)
+        PythonBinaryTarget.__init__(
+                self,
+                name,
+                srcs,
+                deps,
+                main,
+                blade,
+                kwargs)
         self.type = 'py_test'
         self.data['testdata'] = testdata
 
@@ -351,17 +340,16 @@ def py_test(name,
             srcs=[],
             deps=[],
             main=None,
-            base=None,
             testdata=[],
             **kwargs):
     """python test. """
-    target = PythonTest(name,
-                        srcs,
-                        deps,
-                        main,
-                        base,
-                        testdata,
-                        kwargs)
+    target = PythonTestTarget(name,
+                              srcs,
+                              deps,
+                              main,
+                              testdata,
+                              blade.blade,
+                              kwargs)
     blade.blade.register_target(target)
 
 

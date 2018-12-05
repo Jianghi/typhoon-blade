@@ -171,7 +171,6 @@ class Blade(object):
         print_deps = getattr(self.__options, 'deps', False)
         print_depended = getattr(self.__options, 'depended', False)
         dot_file = getattr(self.__options, 'output_to_dot', '')
-        print_dep_tree = getattr(self.__options, 'output_tree', False)
         result_map = self.query_helper(targets)
         if dot_file:
             print_mode = 0
@@ -183,16 +182,13 @@ class Blade(object):
             self.output_dot(result_map, print_mode, dot_file)
         else:
             if print_deps:
-                if print_dep_tree:
-                    self.query_dependency_tree(targets)
-                else:
-                    for key in result_map:
-                        print '\n'
-                        deps = result_map[key][0]
-                        console.info('//%s:%s depends on the following targets:' % (
-                                key[0], key[1]))
-                        for d in deps:
-                            print '%s:%s' % (d[0], d[1])
+                for key in result_map:
+                    print '\n'
+                    deps = result_map[key][0]
+                    console.info('//%s:%s depends on the following targets:' % (
+                            key[0], key[1]))
+                    for d in deps:
+                        print '%s:%s' % (d[0], d[1])
             if print_depended:
                 for key in result_map:
                     print '\n'
@@ -267,37 +263,6 @@ class Blade(object):
             result_map[key] = (sorted(deps), sorted(depended_by))
         return result_map
 
-    def query_dependency_tree(self, targets):
-        """Query the dependency tree of the specified targets. """
-        query_targets = []
-        for target in targets:
-            if ':' not in target:
-                console.error_exit(
-                    'Target %s is not supported by dependency tree query. '
-                    'The target should be in the format directory:name.' % target)
-            path, name = target.split(':')
-            relpath = os.path.relpath(self.__working_dir, self.__root_dir)
-            path = os.path.normpath(os.path.join(relpath, path))
-            query_targets.append((path, name))
-
-        for key in query_targets:
-            console.info('')
-            self._query_dependency_tree(key, 0, self.__build_targets)
-            console.info('')
-
-    def _query_dependency_tree(self, key, level, build_targets):
-        """Query the dependency tree of the specified target recursively. """
-        path, name = key
-        if level == 0:
-            output = '%s:%s' % (path, name)
-        elif level == 1:
-            output = '%s %s:%s' % ('+-', path, name)
-        else:
-            output = '%s%s %s:%s' % ('|  ' * (level - 1), '+-', path, name)
-        console.info(console.colors('end') + console.colors('gray') + output)
-        for dkey in build_targets[key].deps:
-            self._query_dependency_tree(dkey, level + 1, build_targets)
-
     def get_build_path(self):
         """The current building path. """
         return self.__build_path
@@ -340,12 +305,14 @@ class Blade(object):
         It is used to do quick looking.
 
         """
-        key = target.key
-        # Check whether there is already a key in database
-        if key in self.__target_database:
-            console.error_exit('Target %s is duplicate in //%s/BUILD' % (
-                               target.name, target.path))
-        self.__target_database[key] = target
+        target_key = target.key
+        # check that whether there is already a key in database
+        if target_key in self.__target_database:
+            print self.__target_database
+            console.error_exit(
+                    'target name %s is duplicate in //%s/BUILD' % (
+                        target.name, target.path))
+        self.__target_database[target_key] = target
 
     def _is_scons_object_type(self, target_type):
         """The types that shouldn't be registered into blade manager.
@@ -361,8 +328,9 @@ class Blade(object):
     def gen_targets_rules(self):
         """Get the build rules and return to the object who queries this. """
         rules_buf = []
-        skip_test = getattr(self.__options, 'no_test', False)
-        skip_package = not getattr(self.__options, 'generate_package', False)
+        skip_test_targets = False
+        if getattr(self.__options, 'no_test', False):
+            skip_test_targets = True
         for k in self.__sorted_targets_keys:
             target = self.__build_targets[k]
             if not self._is_scons_object_type(target.type):
@@ -371,17 +339,11 @@ class Blade(object):
             if not scons_object:
                 console.warning('not registered scons object, key %s' % str(k))
                 continue
-            if (skip_test and target.type.endswith('_test')
-                and k not in self.__direct_targets):
-                continue
-            if (skip_package and target.type == 'package'
-                and k not in self.__direct_targets):
+            if skip_test_targets and target.type.endswith('_test'):
                 continue
             scons_object.scons_rules()
-            rules = scons_object.get_rules()
-            if rules:
-                rules_buf.append('\n')
-                rules_buf += rules
+            rules_buf.append('\n')
+            rules_buf += scons_object.get_rules()
         return rules_buf
 
     def get_scons_platform(self):

@@ -15,4 +15,5 @@ from blade_main import main
 
 
 if __name__ == '__main__':
+    print __file__
     main(sys.argv[0])

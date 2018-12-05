@@ -52,7 +52,7 @@ _CURSUR_UP = '\033[A'
 def set_log_file(log_file):
     """Set the global log file. """
     global _log
-    _log = open(log_file, 'w', 1)
+    _log = open(log_file, 'w')
 
 
 def get_log_file():
@@ -124,6 +124,8 @@ def info(msg, prefix=True):
 def debug(msg):
     """dump debug message. """
     log(msg)
+    if _verbose:
+        print >>sys.stderr, msg
 
 
 def log(msg):

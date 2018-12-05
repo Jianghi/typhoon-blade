@@ -16,7 +16,6 @@ import sys
 import console
 from blade_util import var_to_list
 from cc_targets import HEAP_CHECK_VALUES
-from proto_library_target import ProtocPlugin
 
 
 # Global config object
@@ -39,7 +38,6 @@ class BladeConfig(object):
             'global_config' : {
                 'build_path_template': 'build${m}_${profile}',
                 'duplicated_source_action': 'warning', # Can be 'warning', 'error', 'none'
-                'test_timeout': None,
             },
 
             'cc_test_config': {
@@ -94,10 +92,6 @@ class BladeConfig(object):
             'scala_test_config': {
                 'scalatest_libs' : '',
             },
-            'go_config' : {
-                'go' : '',
-                'go_home' : '',  # GOPATH
-            },
             'thrift_config': {
                 'thrift': 'thrift',
                 'thrift_libs': [],
@@ -120,13 +114,6 @@ class BladeConfig(object):
                 'protobuf_php_path': '',
                 'protoc_php_plugin': '',
                 'protobuf_java_libs' : [],
-                'protoc_go_plugin': '',
-                # All the generated go source files will be placed
-                # into $GOPATH/src/protobuf_go_path
-                'protobuf_go_path': '',
-            },
-
-            'protoc_plugin_config' : {
             },
 
             'cc_config': {
@@ -142,15 +129,9 @@ class BladeConfig(object):
                 'optimize': [],
                 'benchmark_libs': [],
                 'benchmark_main_libs': [],
-                'securecc' : None,
             },
             'cc_library_config': {
-                'generate_dynamic' : None,
-                # Options passed to ar/ranlib to control how
-                # the archive is created, such as, let ar operate
-                # in deterministic mode discarding timestamps
-                'arflags': [],
-                'ranlibflags': [],
+                'generate_dynamic' : None
             }
         }
 
@@ -284,11 +265,6 @@ def scala_test_config(append=None, **kwargs):
     blade_config.update_config('scala_test_config', append, kwargs)
 
 
-def go_config(append=None, **kwargs):
-    """go_config. """
-    blade_config.update_config('go_config', append, kwargs)
-
-
 def proto_library_config(append=None, **kwargs):
     """protoc config. """
     path = kwargs.get('protobuf_include_path')
@@ -303,14 +279,6 @@ def proto_library_config(append=None, **kwargs):
             kwargs['protobuf_incs'] = [path]
 
     blade_config.update_config('proto_library_config', append, kwargs)
-
-
-def protoc_plugin(**kwargs):
-    """protoc_plugin. """
-    if 'name' not in kwargs:
-        console.error_exit("Missing 'name' in protoc_plugin parameters: %s" % kwargs)
-    config = blade_config.get_config('protoc_plugin_config')
-    config[kwargs['name']] = ProtocPlugin(**kwargs)
 
 
 def thrift_library_config(append=None, **kwargs):

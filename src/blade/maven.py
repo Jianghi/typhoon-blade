@@ -30,16 +30,6 @@ def is_valid_id(id):
     return False
 
 
-class MavenArtifact(object):
-    """
-    MavenArtifact represents a jar artifact and its transitive dependencies
-    separated by colon in maven cache.
-    """
-    def __init__(self, path):
-        self.path = path
-        self.deps = None
-
-
 class MavenCache(object):
     """MavenCache. Manages maven jar files. """
 
@@ -58,7 +48,10 @@ class MavenCache(object):
         self.__log_dir = log_dir
         #   key: (id, classifier)
         #     id: jar id in the format group:artifact:version
-        #   value: an instance of MavenArtifact
+        #   value: tuple
+        #     tuple[0]: jar path
+        #     tuple[1]: jar dependencies paths separated by colon,
+        #               including transitive dependencies
         self.__jar_database = {}
 
         java_config = configparse.blade_config.get_config('java_config')
@@ -72,7 +65,7 @@ class MavenCache(object):
 
         # Download the snapshot artifact daily
         self.__build_time = time.time()
-        self.__one_day_interval = 86400
+        self.__snapshot_artifact_update_interval = 86400
 
     def _generate_jar_path(self, id):
         """Generate jar path within local repository. """
@@ -94,10 +87,6 @@ class MavenCache(object):
             console.error_exit('Invalid id %s: Id should be group:artifact:version, '
                                'such as jaxen:jaxen:1.1.6' % id)
 
-    def _is_log_expired(self, log):
-        """Check if the modification time of log file is expired relative to build time. """
-        return self.__build_time - os.path.getmtime(log) > self.__one_day_interval
-
     def _download_jar(self, id, classifier):
         group, artifact, version = id.split(':')
         pom = artifact + '-' + version + '.pom'
@@ -113,7 +102,9 @@ class MavenCache(object):
             os.path.isfile(os.path.join(target_path, pom))):
             if not version.endswith('-SNAPSHOT'):
                 return True
-            if os.path.isfile(target_log) and not self._is_log_expired(target_log):
+            if (os.path.isfile(target_log) and
+               (self.__build_time - os.path.getmtime(target_log) <
+                self.__snapshot_artifact_update_interval)):
                 return True
 
         if classifier:
@@ -150,7 +141,9 @@ class MavenCache(object):
         if os.path.isfile(os.path.join(target_path, classpath)):
             if not version.endswith('-SNAPSHOT'):
                 return True
-            if os.path.isfile(log) and not self._is_log_expired(log):
+            if (os.path.isfile(log) and
+               (self.__build_time - os.path.getmtime(log) <
+                self.__snapshot_artifact_update_interval)):
                 return True
 
         if classifier:
@@ -184,21 +177,36 @@ class MavenCache(object):
             return False
 
         group, artifact, version = id.split(':')
-        path = self._generate_jar_path(id)
+        target_path = self._generate_jar_path(id)
         jar = artifact + '-' + version + '.jar'
+        classpath = os.path.join(target_path, 'classpath.txt')
         if classifier:
             jar = artifact + '-' + version + '-' + classifier + '.jar'
-        self.__jar_database[(id, classifier)] = MavenArtifact(os.path.join(path, jar))
+            classpath = os.path.join(target_path, 'classpath-%s.txt' % classifier)
+
+        if not self._download_dependency(id, classifier):
+            # Ignore dependency download error
+            self.__jar_database[(id, classifier)] = (os.path.join(target_path, jar), '')
+        else:
+            with open(classpath) as f:
+                # Read the first line
+                self.__jar_database[(id, classifier)] = (os.path.join(target_path, jar),
+                                                         f.readline())
+
         return True
 
-    def _get_artifact_from_database(self, id, classifier):
-        """get_artifact_from_database. """
+    def _get_path_from_database(self, id, classifier, jar):
+        """get_path_from_database. """
         self._check_config()
         self._check_id(id)
         if (id, classifier) not in self.__jar_database:
             if not self._download_artifact(id, classifier):
-                console.error_exit('Download %s failed' % id)
-        return self.__jar_database[(id, classifier)]
+                console.warning('Download %s failed' % id)
+                return '';
+        if jar:
+            return self.__jar_database[(id, classifier)][0]
+        else:
+            return self.__jar_database[(id, classifier)][1]
 
     def get_jar_path(self, id, classifier):
         """get_jar_path
@@ -208,8 +216,7 @@ class MavenCache(object):
         Download jar files and its transitive dependencies if needed.
 
         """
-        artifact = self._get_artifact_from_database(id, classifier)
-        return artifact.path
+        return self._get_path_from_database(id, classifier, True)
 
     def get_jar_deps_path(self, id, classifier):
         """get_jar_deps_path
@@ -218,17 +225,5 @@ class MavenCache(object):
         This string can be used in java -cp later.
 
         """
-        artifact = self._get_artifact_from_database(id, classifier)
-        if artifact.deps is None:
-            if not self._download_dependency(id, classifier):
-                # Ignore dependency download error
-                artifact.deps = ''
-            else:
-                path = self._generate_jar_path(id)
-                classpath = os.path.join(path, 'classpath.txt')
-                if classifier:
-                    classpath = os.path.join(path, 'classpath-%s.txt' % classifier)
-                with open(classpath) as f:
-                    # Read the first line
-                    artifact.deps = f.readline()
-        return artifact.deps
+        return self._get_path_from_database(id, classifier, False)
+

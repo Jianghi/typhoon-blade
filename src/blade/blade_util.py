@@ -15,7 +15,6 @@
 
 import fcntl
 import os
-import re
 import string
 import subprocess
 
@@ -28,28 +27,17 @@ except ImportError:
     import md5
 
 
-location_re = re.compile(r'\$\(location\s+(\S*:\S+)(\s+\w*)?\)')
-
-
 def md5sum_str(user_str):
     """md5sum of basestring. """
-    if not isinstance(user_str, basestring):
-        console.error_exit('Not a valid basestring type to calculate md5.')
     m = md5.md5()
+    if not isinstance(user_str, basestring):
+        console.error_exit('not a valid basestring type to caculate md5')
     m.update(user_str)
     return m.hexdigest()
 
 
-def md5sum_file(file_name):
-    """Calculate md5sum of the file. """
-    f = open(file_name)
-    digest = md5sum_str(f.read())
-    f.close()
-    return digest
-
-
 def md5sum(obj):
-    """Calculate md5sum and returns it. """
+    """caculate md5sum and returns it. """
     return md5sum_str(obj)
 
 

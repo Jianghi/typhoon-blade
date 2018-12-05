@@ -13,13 +13,16 @@
 
 
 import os
+import re
 
 import blade
 import build_rules
 import console
 from blade_util import var_to_list
-from blade_util import location_re
 from target import Target
+
+
+location_re = re.compile(r'\$\(location\s+(\S*:\S+)(\s+\w*)?\)')
 
 
 class GenRuleTarget(Target):
@@ -50,7 +53,6 @@ class GenRuleTarget(Target):
                         'gen_rule',
                         srcs,
                         deps,
-                        None,
                         blade,
                         kwargs)
 
@@ -65,16 +67,21 @@ class GenRuleTarget(Target):
 
     def _process_location_reference(self, m):
         """Process target location reference in the command. """
-        key, type = self._add_location_reference_target(m)
+        key, type = m.groups()
+        if not type:
+            type = ''
+        type = type.strip()
+        key = self._unify_dep(key)
         self.data['locations'].append((key, type))
+        if key not in self.expanded_deps:
+            self.expanded_deps.append(key)
+        if key not in self.deps:
+            self.deps.append(key)
         return '%s'
 
     def _generate_header_files(self):
         """Whether this target generates header files during building."""
         # Be conservative: Assume gen_rule always generates header files.
-        return True
-
-    def _allow_duplicate_source(self):
         return True
 
     def scons_rules(self):
@@ -116,15 +123,12 @@ class GenRuleTarget(Target):
             cmd = '"%s" %% (%s)' % (cmd, ','.join(['str(%s[0])' % v for v in target_vars]))
         else:
             cmd = '"%s"' % cmd
-        self._write_rule('%s = %s.Command([%s], [%s], '
-                         '[%s, "@ls $TARGETS > /dev/null"])' % (
-                         var_name,
-                         env_name,
-                         self._srcs_list(self.path, self.data['outs']),
-                         srcs_str,
-                         cmd))
-        for i in range(len(self.data['outs'])):
-            self._add_target_var('%s' % i, '%s[%s]' % (var_name, i))
+        self._write_rule('%s = %s.Command([%s], [%s], %s)' % (
+                var_name,
+                env_name,
+                self._srcs_list(self.path, self.data['outs']),
+                srcs_str,
+                cmd))
 
         # TODO(phongchen): add Target.get_all_vars
         dep_var_list = []

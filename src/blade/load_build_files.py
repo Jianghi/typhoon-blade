@@ -32,16 +32,13 @@ from pathlib import Path
 import cc_targets
 import cu_targets
 import gen_rule_target
-import go_targets
 import java_jar_target
 import java_targets
 import scala_targets
 import lex_yacc_target
-import package_target
 import proto_library_target
 import py_targets
 import resource_library_target
-import sh_test_target
 import swig_library_target
 import thrift_library
 import fbthrift_library
@@ -199,7 +196,7 @@ def _load_build_file(source_dir, action_if_fail, processed_source_dirs, blade):
     old_current_source_path = blade.get_current_source_path()
     blade.set_current_source_path(source_dir)
     build_file = os.path.join(source_dir, 'BUILD')
-    if os.path.exists(build_file) and not os.path.isdir(build_file):
+    if os.path.exists(build_file):
         try:
             # The magic here is that a BUILD file is a Python script,
             # which can be loaded and executed by execfile().
@@ -228,24 +225,6 @@ def _find_depender(dkey, blade):
             return '//%s:%s' % (target_database[key].path,
                                 target_database[key].name)
     return None
-
-
-def _is_load_excluded(d):
-    """Whether exclude the directory when loading BUILD.
-
-        1. Exclude build directory and directories starting with
-           '.', e.g. .svn.
-        2. TODO(wentingli): Exclude directories matching patterns
-           configured globally
-    """
-    if d.startswith('.'):
-        return True
-    for build_path in ('build32_debug', 'build32_release',
-                       'build64_debug', 'build64_release'):
-        if d.startswith(build_path):
-            return True
-
-    return False
 
 
 def load_targets(target_ids, working_dir, blade_root_dir, blade):
@@ -289,10 +268,11 @@ def load_targets(target_ids, working_dir, blade_root_dir, blade):
                 source_dir = './'
             source_dirs.append((source_dir, WARN_IF_FAIL))
             for root, dirs, files in os.walk(source_dir):
+                # Skip over subdirs starting with '.', e.g., .svn.
                 # Note the dirs[:] = slice assignment; we are replacing the
                 # elements in dirs (and not the list referred to by dirs) so
                 # that os.walk() will not process deleted directories.
-                dirs[:] = [d for d in dirs if not _is_load_excluded(d)]
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
                 for d in dirs:
                     source_dirs.append((os.path.join(root, d), IGNORE_IF_FAIL))
         else:

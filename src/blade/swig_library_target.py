@@ -43,7 +43,6 @@ class SwigLibrary(CcTarget):
                           'swig_library',
                           srcs,
                           deps,
-                          None,
                           warning,
                           [], [], [], optimize, extra_swigflags, [],
                           blade,
