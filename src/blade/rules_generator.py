@@ -130,6 +130,7 @@ import scons_helper
         self._add_rule('time_value = Value("%s")' % time.asctime())
         proto_config = configparse.blade_config.get_config('proto_library_config')
         protoc_bin = proto_config['protoc']
+        grpc_bin = proto_config['grpc']
         protoc_java_bin = protoc_bin
         if proto_config['protoc_java']:
             protoc_java_bin = proto_config['protoc_java']
@@ -140,9 +141,10 @@ import scons_helper
         protoc_php_plugin = proto_config['protoc_php_plugin']
         self._add_rule('scons_helper.setup_proto_builders(top_env, "%s", protoc_bin="%s", '
                        'protoc_java_bin="%s", protobuf_path="%s", protobuf_incs_str="%s", '
-                       'protobuf_php_path="%s", protoc_php_plugin="%s")' % (
+                       'protobuf_php_path="%s", protoc_php_plugin="%s",'
+                       'protoc_grpc_plugin="%s")' % (
             self.build_dir, protoc_bin, protoc_java_bin, protobuf_path, protobuf_incs_str,
-            protobuf_php_path, protoc_php_plugin))
+            protobuf_php_path, protoc_php_plugin, grpc_bin))
 
     def _generate_thrift_builders(self):
         # Generate thrift library builders.

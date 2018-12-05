@@ -1103,8 +1103,11 @@ def proto_scan_func(node, env, path, arg):
 
 def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
                          protobuf_path, protobuf_incs_str,
-                         protoc_php_plugin, protobuf_php_path):
+                         protoc_php_plugin, protobuf_php_path,
+                         protoc_grpc_plugin):
     compile_proto_cc_message = console.erasable('%sCompiling %s$SOURCE%s to cc source%s' % \
+        (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
+    compile_proto_grpc_message = console.erasable('%sCompiling %s$SOURCE%s to grpc source%s' % \
         (colors('cyan'), colors('purple'), colors('cyan'), colors('end')))
 
     compile_proto_java_message = console.erasable('%sCompiling %s$SOURCE%s to java source%s' % \
@@ -1124,11 +1127,15 @@ def setup_proto_builders(top_env, build_dir, protoc_bin, protoc_java_bin,
             protoc_bin, protobuf_incs_str, build_dir),
         compile_proto_cc_message))
     top_env.Append(BUILDERS = {"Proto" : proto_bld})
-
+    grpc_bld = SCons.Builder.Builder(action = MakeAction(
+        "%s --proto_path=. --plugin=protoc-gen-grpc=%s -I. %s -I=`dirname $SOURCE` --cpp_out=%s $SOURCE" % (
+            protoc_bin, protoc_grpc_plugin, protobuf_incs_str, build_dir),
+        compile_proto_cc_message))
+    top_env.Append(BUILDERS = {"GrpcProto" : grpc_bld})
     proto_java_bld = SCons.Builder.Builder(action = MakeAction(
         "%s --proto_path=. --proto_path=%s --java_out=%s/`dirname $SOURCE` $SOURCE" % (
             protoc_java_bin, protobuf_path, build_dir),
-        compile_proto_java_message))
+        compile_proto_grpc_message))
     top_env.Append(BUILDERS = {"ProtoJava" : proto_java_bld})
 
     proto_php_bld = SCons.Builder.Builder(action = MakeAction(

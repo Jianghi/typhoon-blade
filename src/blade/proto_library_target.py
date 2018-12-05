@@ -118,6 +118,12 @@ class ProtoLibrary(CcTarget, java_targets.JavaTargetMixIn):
         return (self._target_file_path('%s.pb.cc' % proto_name),
                 self._target_file_path('%s.pb.h' % proto_name))
 
+    def _proto_gen_grpc_files(self, src):
+        """_proto_gen_files. """
+        proto_name = src[:-6]
+        return (self._target_file_path('%s.grpc.pb.cc' % proto_name),
+                self._target_file_path('%s.grpc.pb.h' % proto_name))
+
     def _proto_gen_php_file(self, src):
         """Generate the php file name. """
         proto_name = src[:-6]
