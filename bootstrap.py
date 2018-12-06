@@ -11,8 +11,8 @@ import sys
 import os.path
 
 # Load package from blade.zip or source dir?
-# blade_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'blade.zip'))
-blade_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src/blade'))
+blade_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'blade.zip'))
+#blade_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src/blade'))
 sys.path.insert(0, blade_path)
 import blade_main
 
