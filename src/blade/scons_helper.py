@@ -1438,6 +1438,7 @@ def _get_version_info(blade_root_dir, svn_roots):
             if not version_info:
                 console.warning('failed to get version control info in %s' % root_dir)
                 continue
+        else:
             svn_info_map[root_dir] = version_info
 
     return svn_info_map
