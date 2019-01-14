@@ -1411,7 +1411,14 @@ def _exec_get_version_info(cmd, cwd, dirname):
     else:
         return stdout.replace('\n', '\\n\\\n')
 
-
+def _get_url_from_svninfo(svn_info):
+    lines=svn_info.split('\\n\\\n');
+    for line in lines:
+       if line.find('URL:') == 0:
+         return line[4:].strip()
+         break;
+    return ""
+   
 def _get_version_info(blade_root_dir, svn_roots):
     """Gets svn root dir info. """
     svn_info_map = {}
@@ -1423,6 +1430,8 @@ def _get_version_info(blade_root_dir, svn_roots):
             svn_info_map[dirname] = version_info
         return svn_info_map
 
+    dir_svn_urls = {}
+    svn_roots.sort()
     for root_dir in svn_roots:
         root_dir_realpath = os.path.realpath(root_dir)
         svn_working_dir = os.path.dirname(root_dir_realpath)
@@ -1439,9 +1448,19 @@ def _get_version_info(blade_root_dir, svn_roots):
                 console.warning('failed to get version control info in %s' % root_dir)
                 continue
         else:
-            svn_info_map[root_dir] = version_info
+            paths=root_dir.split('/')
+            svn_url=_get_url_from_svninfo(version_info);
+            if len(paths) > 1 and dir_svn_urls.has_key(paths[0]) and svn_url.find(dir_svn_urls[paths[0]]) == 0:
+                continue
+            dir_svn_urls[root_dir] = svn_url;
+            svn_info_map[root_dir] = version_info;
 
     return svn_info_map
+
+def _case_insensitive_sort(liststring):
+    listtemp = [(x.lower(),x) for x in liststring]
+    listtemp.sort()    
+    return [x[1] for x in listtemp]
 
 def generate_version_file(top_env, blade_root_dir, build_dir,
                           profile, gcc_version, svn_roots):
@@ -1459,9 +1478,10 @@ def generate_version_file(top_env, blade_root_dir, build_dir,
     print >>version_cpp, 'namespace binary_version {'
     print >>version_cpp, 'extern const int kSvnInfoCount = %d;' % svn_info_len
 
+    sort_keys=_case_insensitive_sort(svn_info_map.keys());
     svn_info_array = '{'
     for idx in range(svn_info_len):
-        key_with_idx = svn_info_map.keys()[idx]
+        key_with_idx = sort_keys[idx]
         svn_info_line = '"%s"' % svn_info_map[key_with_idx]
         svn_info_array += svn_info_line
         if idx != (svn_info_len - 1):

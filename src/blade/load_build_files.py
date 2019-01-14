@@ -320,9 +320,15 @@ def load_targets(target_ids, working_dir, blade_root_dir, blade):
 
     # Iterating to get svn root dirs
     for path, name in related_targets:
-        root_dir = path.split('/')[0].strip()
-        if root_dir not in blade.svn_root_dirs and '#' not in root_dir:
-            blade.svn_root_dirs.append(root_dir)
+        path_names=path.split('/');
+        if path_names[0] == 'src' and len(path_names) > 1:
+           dirs = [path_names[0].strip(), '{}/{}'.format(path_names[0].strip(),path_names[1].strip())]
+        else:
+           dirs = [path_names[0].strip()]
+        
+        for root_dir in dirs:
+            if root_dir not in blade.svn_root_dirs and '#' not in root_dir:
+                blade.svn_root_dirs.append(root_dir)
 
     return direct_targets, all_command_targets, related_targets
 
