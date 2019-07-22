@@ -43,8 +43,9 @@ class SconsPlatform(object):
         (stdout, stderr) = p.communicate()
         if p.returncode == 0:
             version_line = stdout.splitlines(True)[0]
-            version = version_line.split()[2]
-            return version
+            if version_line.find("gcc") > 0 and version_line.find("version") > 0:
+                version = version_line.split()[2]
+                return version
         return ''
 
     @staticmethod
