@@ -18,8 +18,10 @@ import blade
 import configparse
 import console
 import build_rules
+import platform
 from blade_util import var_to_list, stable_unique
 from target import Target
+
 
 
 class CcTarget(Target):
@@ -380,11 +382,13 @@ class CcTarget(Target):
         (link_all_symbols_lib_list, lib_list) = self._static_deps_list()
         lib_str = 'LIBS=[%s]' % ','.join(lib_list)
         whole_link_flags = []
+
         if link_all_symbols_lib_list:
-            whole_link_flags = ['"-Wl,--whole-archive"']
+            os_type = platform.platform().find("Darwin") == 0 
+            whole_link_flags = [os_type and '"-Wl,-all_load"' or '"-Wl,--whole-archive"']
             for i in link_all_symbols_lib_list:
                 whole_link_flags.append(i)
-            whole_link_flags.append('"-Wl,--no-whole-archive"')
+            whole_link_flags.append(os_type and '"-Wl,-noall_load"' or '"-Wl,--no-whole-archive"')
         return (link_all_symbols_lib_list, lib_str, ', '.join(whole_link_flags))
 
     def _get_dynamic_deps_lib_list(self):
@@ -760,8 +764,8 @@ class CcBinary(CcTarget):
         env_name = self._env_name()
         var_name = self._var_name()
 
-        platform = self.blade.get_scons_platform()
-        if platform.get_gcc_version() > '4.5':
+        scons_platform = self.blade.get_scons_platform()
+        if scons_platform.get_gcc_version() > '4.5':
             link_flag_list = ['-static-libgcc', '-static-libstdc++']
             self._write_rule('%s.Append(LINKFLAGS=%s)' % (env_name, link_flag_list))
 
